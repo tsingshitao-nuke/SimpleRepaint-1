@@ -1,0 +1,6 @@
+D:\my doc\GitHub\SimpleRepaint\SimpleRepaintCache\SimpleRepaintCache\obj\Debug\SimpleRepaintCache.csproj.AssemblyReference.cache
+D:\my doc\GitHub\SimpleRepaint\SimpleRepaintCache\SimpleRepaintCache\obj\Debug\SimpleRepaintCache.csproj.CoreCompileInputs.cache
+D:\my doc\GitHub\SimpleRepaint\SimpleRepaintCache\SimpleRepaintCache\bin\Debug\SimpleRepaintCache.dll
+D:\my doc\GitHub\SimpleRepaint\SimpleRepaintCache\SimpleRepaintCache\bin\Debug\SimpleRepaintCache.pdb
+D:\my doc\GitHub\SimpleRepaint\SimpleRepaintCache\SimpleRepaintCache\obj\Debug\SimpleRepaintCache.dll
+D:\my doc\GitHub\SimpleRepaint\SimpleRepaintCache\SimpleRepaintCache\obj\Debug\SimpleRepaintCache.pdb
