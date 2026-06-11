@@ -117,15 +117,23 @@ namespace SimpleRepaintCache
             sb.AppendLine("\t\tuiGroupDisplayName = #LOC_SR_Repaint_UIGroup_title");
             sb.AppendLine();
 
-            // Original subtype - no MATERIAL block, just primaryColor
+            // Original subtype
             sb.AppendLine("\t\tSUBTYPE");
             sb.AppendLine("\t\t{");
             sb.AppendLine("\t\t\tname = SR_Original");
             sb.AppendLine("\t\t\ttitle = #LOC_SR_Color_Original");
             sb.AppendLine("\t\t\tprimaryColor = #C7C7C7");
+            sb.AppendLine("\t\t\tMATERIAL");
+            sb.AppendLine("\t\t\t{");
+            sb.AppendLine($"\t\t\t\tname = {materialMask}");
+            sb.AppendLine("\t\t\t\tCOLOR");
+            sb.AppendLine("\t\t\t\t{");
+            sb.AppendLine("\t\t\t\t\tcolor = #C7C7C7");
+            sb.AppendLine("\t\t\t\t}");
+            sb.AppendLine("\t\t\t}");
             sb.AppendLine("\t\t}");
 
-            // Color subtypes - no MATERIAL block to avoid _Color conflicts with other mods
+            // Color subtypes with MATERIAL block (required for B9PS to apply colors)
             foreach (var color in colors)
             {
                 if (!color.IsUsed) continue;
@@ -135,6 +143,14 @@ namespace SimpleRepaintCache
                 sb.AppendLine($"\t\t\tname = {color.Name}");
                 sb.AppendLine($"\t\t\ttitle = {color.Title}");
                 sb.AppendLine($"\t\t\tprimaryColor = {color.Color}");
+                sb.AppendLine("\t\t\tMATERIAL");
+                sb.AppendLine("\t\t\t{");
+                sb.AppendLine($"\t\t\t\tname = {materialMask}");
+                sb.AppendLine("\t\t\t\tCOLOR");
+                sb.AppendLine("\t\t\t\t{");
+                sb.AppendLine($"\t\t\t\t\tcolor = {color.Color}");
+                sb.AppendLine("\t\t\t\t}");
+                sb.AppendLine("\t\t\t}");
                 sb.AppendLine("\t\t}");
             }
 
@@ -157,7 +173,7 @@ namespace SimpleRepaintCache
             sb.AppendLine("\t\tuseMultipleDragCubes = false");
             sb.AppendLine();
 
-            // Color variants - use primaryColor/secondaryColor only, no TEXTURE block
+            // Color variants with TEXTURE block (required for ModulePartVariants to apply colors)
             foreach (var color in colors)
             {
                 if (!color.IsUsed) continue;
@@ -168,6 +184,10 @@ namespace SimpleRepaintCache
                 sb.AppendLine($"\t\t\tdisplayName = {color.Title}");
                 sb.AppendLine($"\t\t\tprimaryColor = {color.Color}");
                 sb.AppendLine($"\t\t\tsecondaryColor = {color.Color}");
+                sb.AppendLine("\t\t\tTEXTURE");
+                sb.AppendLine("\t\t\t{");
+                sb.AppendLine($"\t\t\t\t_Color = {color.Color}");
+                sb.AppendLine("\t\t\t}");
                 sb.AppendLine("\t\t}");
             }
 

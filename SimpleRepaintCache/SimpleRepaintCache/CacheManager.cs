@@ -259,7 +259,9 @@ namespace SimpleRepaintCache
         }
 
         /// <summary>
-        /// Disables the original patch by renaming it to .bak
+        /// Disables the original patch by renaming .cfg to .bak.
+        /// This prevents ModuleManager from processing the original patch,
+        /// avoiding double injection with the cache patch.
         /// </summary>
         public static bool DisableOriginalPatch(CachePaths paths)
         {
@@ -290,7 +292,8 @@ namespace SimpleRepaintCache
         }
 
         /// <summary>
-        /// Restores the original patch from .bak
+        /// Restores the original patch from .bak back to .cfg.
+        /// Called on game exit so that removing the cache mod leaves SimpleRepaint intact.
         /// </summary>
         public static bool RestoreOriginalPatch(CachePaths paths)
         {
@@ -355,6 +358,26 @@ namespace SimpleRepaintCache
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Ensures the original .cfg is restored on game exit.
+        /// This guarantees that removing the cache mod leaves SimpleRepaint fully functional.
+        /// </summary>
+        public static void EnsureOriginalPatchOnExit(CachePaths paths)
+        {
+            try
+            {
+                if (File.Exists(paths.OriginalPatchBackupPath) && !File.Exists(paths.OriginalPatchPath))
+                {
+                    File.Copy(paths.OriginalPatchBackupPath, paths.OriginalPatchPath, overwrite: true);
+                    UnityEngine.Debug.Log("[SimpleRepaintCache] Restored original patch on exit: .bak -> .cfg");
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error restoring original patch on exit: {ex.Message}");
+            }
         }
     }
 }

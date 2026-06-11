@@ -41,12 +41,22 @@ namespace SimpleRepaintCache
                 return results;
             }
 
-            UnityEngine.Debug.Log($"[SimpleRepaintCache] Analyzing {allParts.Count} loaded parts...");
-
-            foreach (var availPart in allParts)
+            // Deduplicate by part name to prevent double injection
+            var seenPartNames = new HashSet<string>();
+            var distinctParts = new List<AvailablePart>();
+            foreach (var p in allParts)
             {
-                if (availPart == null || availPart.partPrefab == null) continue;
+                if (p == null || p.partPrefab == null) continue;
+                if (seenPartNames.Add(p.name))
+                {
+                    distinctParts.Add(p);
+                }
+            }
 
+            UnityEngine.Debug.Log($"[SimpleRepaintCache] Analyzing {distinctParts.Count} distinct parts (from {allParts.Count} total entries)...");
+
+            foreach (var availPart in distinctParts)
+            {
                 string partName = availPart.name;
                 var partPrefab = availPart.partPrefab;
 
@@ -148,9 +158,12 @@ namespace SimpleRepaintCache
                     }
                 }
 
-                // Check if part already has a ModuleB9PartSwitch with moduleID = SimpleRepaint
-                bool hasB9PSModule = false;
+                // Check for existing modules that affect repaint compatibility
+                bool hasExistingSimpleRepaintB9PS = false;
+                bool hasOtherB9PS = false;
                 bool hasPartVariantsModule = false;
+                bool hasSSTURecolor = false;
+                bool hasTexturesUnlimited = false;
                 foreach (var module in partPrefab.Modules)
                 {
                     if (module.moduleName == "ModuleB9PartSwitch")
@@ -161,24 +174,52 @@ namespace SimpleRepaintCache
                             string mid = moduleIDField.GetValue<string>(module);
                             if (mid == "SimpleRepaint")
                             {
-                                hasB9PSModule = true;
-                                break;
+                                hasExistingSimpleRepaintB9PS = true;
                             }
+                            else
+                            {
+                                hasOtherB9PS = true;
+                            }
+                        }
+                        else
+                        {
+                            hasOtherB9PS = true;
                         }
                     }
                     if (module.moduleName == "ModulePartVariants")
                     {
                         hasPartVariantsModule = true;
                     }
+                    if (module.moduleName == "SSTURecolor")
+                    {
+                        hasSSTURecolor = true;
+                    }
+                    if (module.moduleName == "TexturesUnlimited")
+                    {
+                        hasTexturesUnlimited = true;
+                    }
                 }
 
-                if (hasB9PSModule || hasPartVariantsModule)
+                // Skip if already has SimpleRepaint module
+                if (hasExistingSimpleRepaintB9PS || hasPartVariantsModule)
                 {
                     results.Add(new PartAnalysis
                     {
                         PartName = partName,
                         ShouldInject = false,
-                        Reason = "Already has repaint module"
+                        Reason = "Already has SimpleRepaint module"
+                    });
+                    continue;
+                }
+
+                // Skip parts with SSTURecolor or TexturesUnlimited (they have better repaint support)
+                if (hasSSTURecolor || hasTexturesUnlimited)
+                {
+                    results.Add(new PartAnalysis
+                    {
+                        PartName = partName,
+                        ShouldInject = false,
+                        Reason = hasSSTURecolor ? "Has SSTURecolor module" : "Has TexturesUnlimited module"
                     });
                     continue;
                 }
@@ -207,7 +248,8 @@ namespace SimpleRepaintCache
                     }
                 }
 
-                bool useB9PS = !isGreyListed;
+                // If part has other B9PS modules, use PartVariants instead to avoid material conflicts
+                bool useB9PS = !isGreyListed && !hasOtherB9PS;
 
                 results.Add(new PartAnalysis
                 {

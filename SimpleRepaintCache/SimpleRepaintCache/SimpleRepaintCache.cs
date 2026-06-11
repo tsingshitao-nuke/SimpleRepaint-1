@@ -113,6 +113,13 @@ namespace SimpleRepaintCache
                 // Clean up event subscription
                 GameEvents.OnPartLoaderLoaded.Remove(OnPartLoaderLoaded);
             }
+
+            // Always restore original .cfg on exit, so removing the cache mod
+            // leaves SimpleRepaint fully functional
+            if (_paths != null)
+            {
+                CacheManager.EnsureOriginalPatchOnExit(_paths);
+            }
         }
     }
 }
