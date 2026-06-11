@@ -8,8 +8,9 @@ namespace SimpleRepaintCache
 {
     /// <summary>
     /// Main KSPAddon that manages the cache lifecycle.
-    /// Uses :NEEDS[!SimpleRepaintCache] on the original patch to prevent double injection.
-    /// Runs after PartLoader has loaded all parts.
+    /// The cache .cfg is generated at runtime after MM has finished processing,
+    /// so there is never any double injection. The original patch is renamed to .bak
+    /// so MM skips it on subsequent launches.
     /// </summary>
     [KSPAddon(KSPAddon.Startup.Instantly, true)]
     public class SimpleRepaintCacheAddon : MonoBehaviour
@@ -39,6 +40,15 @@ namespace SimpleRepaintCache
             {
                 UnityEngine.Debug.Log("[SimpleRepaintCache] PartLoader loaded, checking cache...");
 
+                // Step 0: If cache directory is missing (e.g. user deleted it to reinstall),
+                // restore the original .cfg from .bak so this launch works with the original patch.
+                // The cache will be regenerated below.
+                bool restored = CacheManager.RestoreOriginalPatchIfCacheMissing(_paths);
+                if (restored)
+                {
+                    UnityEngine.Debug.Log("[SimpleRepaintCache] Original patch restored for this launch. Cache will be regenerated.");
+                }
+
                 // Step 1: Check if cache is valid
                 bool cacheValid = CacheManager.IsCacheValid(_paths, out var currentManifest);
 
@@ -48,7 +58,10 @@ namespace SimpleRepaintCache
                 }
                 else
                 {
-                    UnityEngine.Debug.Log("[SimpleRepaintCache] Cache invalid or missing, regenerating...");
+                    // Determine if this is a first-time generation or a regeneration
+                    bool isFirstGeneration = !System.IO.File.Exists(System.IO.Path.Combine(_paths.CacheDir, "cache.manifest"));
+
+                    UnityEngine.Debug.Log($"[SimpleRepaintCache] Cache {(isFirstGeneration ? "missing" : "invalid")}, regenerating...");
 
                     // Step 2: Load configuration
                     var colors = ColorConfigLoader.LoadColors(_paths.GameDataPath);
@@ -66,7 +79,7 @@ namespace SimpleRepaintCache
 
                     if (!string.IsNullOrEmpty(patchContent))
                     {
-                        // Step 5: Write cache patch
+                        // Step 5: Write cache patch (MM has already finished, so no double injection)
                         CacheManager.WriteCachePatch(_paths, patchContent);
 
                         // Step 6: Update manifest
@@ -75,9 +88,26 @@ namespace SimpleRepaintCache
                         currentManifest.GeneratedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                         CacheManager.SaveManifest(_paths, currentManifest);
 
-                        // Step 7: Add :NEEDS[!SimpleRepaintCache] to original patch
-                        // This prevents MM from processing the original patch on subsequent launches
-                        CacheManager.AddNeedsCondition(_paths);
+                        // Step 7: Disable original patch by renaming .cfg → .bak
+                        // On next launch, MM will only see the cache .cfg
+                        CacheManager.DisableOriginalPatch(_paths);
+
+                        // Step 8: Runtime injection bridge
+                        // On first generation: MM has already processed the original SimpleRepaint.cfg,
+                        // so all parts already have their modules. Skip runtime injection to avoid
+                        // double injection and NRE errors.
+                        // On subsequent regeneration: MM processed the old cache, so only new parts
+                        // (added since last generation) lack modules. RuntimeInjector will check each
+                        // part and only inject those that don't already have modules.
+                        if (!isFirstGeneration)
+                        {
+                            UnityEngine.Debug.Log("[SimpleRepaintCache] Running runtime injection bridge for new parts...");
+                            RuntimeInjector.InjectModules(analyses, colors, settings);
+                        }
+                        else
+                        {
+                            UnityEngine.Debug.Log("[SimpleRepaintCache] First generation - MM already handled all parts, skipping runtime injection.");
+                        }
 
                         UnityEngine.Debug.Log($"[SimpleRepaintCache] Cache generated successfully! " +
                             $"{currentManifest.PartCount} parts with {currentManifest.ColorCount} colors.");

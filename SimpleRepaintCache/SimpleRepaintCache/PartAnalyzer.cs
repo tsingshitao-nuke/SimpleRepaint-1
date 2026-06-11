@@ -160,9 +160,10 @@ namespace SimpleRepaintCache
 
                 // Check for existing modules that affect repaint compatibility
                 bool hasExistingSimpleRepaintB9PS = false;
-                bool hasOtherB9PS = false;
+                bool hasPartVariants = false;
                 bool hasSSTURecolor = false;
                 bool hasTexturesUnlimited = false;
+                bool hasSSTURecolorGUI = false;
                 foreach (var module in partPrefab.Modules)
                 {
                     if (module.moduleName == "ModuleB9PartSwitch")
@@ -175,15 +176,11 @@ namespace SimpleRepaintCache
                             {
                                 hasExistingSimpleRepaintB9PS = true;
                             }
-                            else
-                            {
-                                hasOtherB9PS = true;
-                            }
                         }
-                        else
-                        {
-                            hasOtherB9PS = true;
-                        }
+                    }
+                    if (module.moduleName == "ModulePartVariants")
+                    {
+                        hasPartVariants = true;
                     }
                     if (module.moduleName == "SSTURecolor")
                     {
@@ -192,6 +189,10 @@ namespace SimpleRepaintCache
                     if (module.moduleName == "TexturesUnlimited")
                     {
                         hasTexturesUnlimited = true;
+                    }
+                    if (module.moduleName == "SSTURecolorGUI")
+                    {
+                        hasSSTURecolorGUI = true;
                     }
                 }
 
@@ -209,14 +210,18 @@ namespace SimpleRepaintCache
                     continue;
                 }
 
-                // Skip parts with SSTURecolor or TexturesUnlimited (they have better repaint support)
-                if (hasSSTURecolor || hasTexturesUnlimited)
+                // Skip parts with SSTURecolor, SSTURecolorGUI, or TexturesUnlimited (they have better repaint support)
+                if (hasSSTURecolor || hasTexturesUnlimited || hasSSTURecolorGUI)
                 {
+                    string reason;
+                    if (hasSSTURecolor) reason = "Has SSTURecolor module";
+                    else if (hasSSTURecolorGUI) reason = "Has SSTURecolorGUI module";
+                    else reason = "Has TexturesUnlimited module";
                     results.Add(new PartAnalysis
                     {
                         PartName = partName,
                         ShouldInject = false,
-                        Reason = hasSSTURecolor ? "Has SSTURecolor module" : "Has TexturesUnlimited module"
+                        Reason = reason
                     });
                     continue;
                 }
@@ -245,8 +250,21 @@ namespace SimpleRepaintCache
                     }
                 }
 
-                // If part has other B9PS modules, use PartVariants instead to avoid material conflicts
-                bool useB9PS = !isGreyListed && !hasOtherB9PS;
+                // If part already has ModulePartVariants AND is grey-listed, skip it
+                // (grey-listed parts can't use B9PS, and we don't want to add a second PartVariants module)
+                if (hasPartVariants && isGreyListed)
+                {
+                    results.Add(new PartAnalysis
+                    {
+                        PartName = partName,
+                        ShouldInject = false,
+                        Reason = "Has PartVariants and is grey-listed"
+                    });
+                    continue;
+                }
+
+                // Only grey-listed parts use PartVariants; everything else uses B9PS
+                bool useB9PS = !isGreyListed;
 
                 results.Add(new PartAnalysis
                 {

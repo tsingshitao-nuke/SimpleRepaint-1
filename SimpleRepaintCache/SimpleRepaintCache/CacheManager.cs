@@ -4,12 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace SimpleRepaintCache
 {
     /// <summary>
-    /// Manages cache validation, file hashing, and adding :NEEDS conditions to the original patch
+    /// Manages cache validation, file hashing, and disabling the original patch via .bak rename.
+    /// The cache .cfg is generated at runtime after MM has finished processing, so there is
+    /// never any double injection. On subsequent launches, the original .cfg.bak is skipped by MM.
     /// </summary>
     public static class CacheManager
     {
@@ -43,6 +44,7 @@ namespace SimpleRepaintCache
             public string ManifestPath => Path.Combine(CacheDir, MANIFEST_FILENAME);
             public string CachePatchPath => Path.Combine(CacheDir, CACHE_PATCH_FILENAME);
             public string OriginalPatchPath => Path.Combine(GameDataPath, "SimpleRepaint", "Patches", ORIGINAL_PATCH_FILENAME);
+            public string OriginalPatchBakPath => Path.Combine(GameDataPath, "SimpleRepaint", "Patches", ORIGINAL_PATCH_FILENAME + ".bak");
         }
 
         /// <summary>
@@ -281,49 +283,108 @@ namespace SimpleRepaintCache
         }
 
         /// <summary>
-        /// Adds :NEEDS[!SimpleRepaintCache] condition to all @PART lines in the original patch.
-        /// This prevents ModuleManager from processing the original patch when the cache mod is installed,
-        /// eliminating double injection. When the cache mod is removed, the condition auto-resolves.
+        /// Renames the original SimpleRepaint.cfg to .bak so MM skips it on subsequent launches.
+        /// The cache .cfg is generated at runtime after MM has finished, so there is no double injection.
         /// </summary>
-        public static bool AddNeedsCondition(CachePaths paths)
+        public static bool DisableOriginalPatch(CachePaths paths)
         {
             try
             {
-                if (!File.Exists(paths.OriginalPatchPath))
+                if (File.Exists(paths.OriginalPatchBakPath))
                 {
-                    UnityEngine.Debug.LogWarning("[SimpleRepaintCache] Original patch not found, cannot add :NEEDS condition");
-                    return false;
-                }
-
-                string content = File.ReadAllText(paths.OriginalPatchPath);
-
-                // Check if already has the condition
-                if (content.Contains(":NEEDS[!SimpleRepaintCache]"))
-                {
-                    UnityEngine.Debug.Log("[SimpleRepaintCache] Original patch already has :NEEDS condition");
+                    // Already disabled
                     return true;
                 }
 
-                // Add :NEEDS[!SimpleRepaintCache] after each @PART[...] pattern
-                // Pattern: @PART[...] or @PART[...]:HAS[...] etc.
-                // We insert :NEEDS[!SimpleRepaintCache] right after the @PART[...] part
-                string modified = Regex.Replace(content,
-                    @"(@PART\[[^\]]*\])(?!\s*:NEEDS)",
-                    "$1:NEEDS[!SimpleRepaintCache]");
-
-                if (modified == content)
+                if (!File.Exists(paths.OriginalPatchPath))
                 {
-                    UnityEngine.Debug.LogWarning("[SimpleRepaintCache] No @PART lines found to modify");
+                    UnityEngine.Debug.LogWarning("[SimpleRepaintCache] Original patch not found, cannot disable");
                     return false;
                 }
 
-                File.WriteAllText(paths.OriginalPatchPath, modified);
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Added :NEEDS[!SimpleRepaintCache] to original patch");
+                File.Move(paths.OriginalPatchPath, paths.OriginalPatchBakPath);
+                UnityEngine.Debug.Log("[SimpleRepaintCache] Disabled original patch: .cfg → .bak");
                 return true;
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error adding :NEEDS condition: {ex.Message}");
+                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error disabling original patch: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Restores the original patch from .bak to .cfg.
+        /// Used when the cache mod is removed - player manually renames .bak back to .cfg.
+        /// </summary>
+        public static bool RestoreOriginalPatch(CachePaths paths)
+        {
+            try
+            {
+                if (!File.Exists(paths.OriginalPatchBakPath))
+                {
+                    // Already restored or never disabled
+                    return true;
+                }
+
+                if (File.Exists(paths.OriginalPatchPath))
+                {
+                    // Both exist, remove the .cfg (it's the cache-generated one)
+                    File.Delete(paths.OriginalPatchPath);
+                }
+
+                File.Move(paths.OriginalPatchBakPath, paths.OriginalPatchPath);
+                UnityEngine.Debug.Log("[SimpleRepaintCache] Restored original patch: .bak → .cfg");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error restoring original patch: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Checks if the cache directory exists. If not (e.g. user deleted cache to reinstall),
+        /// restores the original .cfg from .bak so this launch works with the original patch.
+        /// Returns true if restoration was performed.
+        /// </summary>
+        public static bool RestoreOriginalPatchIfCacheMissing(CachePaths paths)
+        {
+            try
+            {
+                // Check if cache directory or manifest is missing
+                bool cacheMissing = !Directory.Exists(paths.CacheDir) || !File.Exists(paths.ManifestPath);
+
+                if (!cacheMissing)
+                {
+                    return false;
+                }
+
+                // Cache is missing, check if we have a .bak to restore
+                if (!File.Exists(paths.OriginalPatchBakPath))
+                {
+                    // No .bak, nothing to restore
+                    return false;
+                }
+
+                UnityEngine.Debug.Log("[SimpleRepaintCache] Cache directory missing, restoring original patch for this launch...");
+
+                // Remove any existing .cfg (might be stale cache)
+                if (File.Exists(paths.OriginalPatchPath))
+                {
+                    File.Delete(paths.OriginalPatchPath);
+                }
+
+                // Restore .bak → .cfg
+                File.Move(paths.OriginalPatchBakPath, paths.OriginalPatchPath);
+                UnityEngine.Debug.Log("[SimpleRepaintCache] Original patch restored: .bak → .cfg");
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error restoring original patch: {ex.Message}");
                 return false;
             }
         }

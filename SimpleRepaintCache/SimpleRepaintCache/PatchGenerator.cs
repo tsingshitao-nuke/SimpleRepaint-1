@@ -6,17 +6,55 @@ using System.Text;
 namespace SimpleRepaintCache
 {
     /// <summary>
-    /// Generates optimized MM patch files from part analysis results
+    /// Generates optimized MM patch files from part analysis results.
+    /// Each patch block includes full :HAS conditions to ensure MM re-evaluates
+    /// the part state on every launch, preventing conflicts with other mods.
     /// </summary>
     public static class PatchGenerator
     {
         /// <summary>
         /// Sanitizes a part name for use in MM @PART[] syntax.
         /// MM does not support spaces in part names - replace with '?'
+        /// Also generates an alias with dots replaced by underscores, since some mods
+        /// may change part names at runtime (e.g. SPO.CommandCapsule vs SPO_CommandCapsule).
         /// </summary>
         private static string SanitizePartName(string partName)
         {
             return partName.Replace(' ', '?');
+        }
+
+        /// <summary>
+        /// Generates a MM @PART[] name that matches both the original name and
+        /// a variant with underscores replaced by dots (or vice versa).
+        /// This handles cases where mods change part names at runtime.
+        /// </summary>
+        private static string GetPartNameWithAlias(string partName)
+        {
+            string sanitized = SanitizePartName(partName);
+            
+            // If the name contains dots, also add an underscore version as alias
+            if (partName.Contains("."))
+            {
+                string underscoreVersion = partName.Replace(".", "_");
+                string sanitizedUnderscore = SanitizePartName(underscoreVersion);
+                if (sanitizedUnderscore != sanitized)
+                {
+                    return $"{sanitizedUnderscore}|{sanitized}";
+                }
+            }
+            
+            // If the name contains underscores, also add a dot version as alias
+            if (partName.Contains("_"))
+            {
+                string dotVersion = partName.Replace("_", ".");
+                string sanitizedDot = SanitizePartName(dotVersion);
+                if (sanitizedDot != sanitized)
+                {
+                    return $"{sanitized}|{sanitizedDot}";
+                }
+            }
+            
+            return sanitized;
         }
 
         /// <summary>
@@ -95,12 +133,41 @@ namespace SimpleRepaintCache
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Builds the :HAS condition string for a part, replicating the filtering logic
+        /// from SimpleRepaint.cfg. This ensures MM re-evaluates the part state on every launch.
+        /// </summary>
+        private static string BuildHasCondition(PartAnalyzer.PartAnalysis analysis)
+        {
+            // Base conditions that apply to all parts:
+            // - ~SR_Ignore[] (part not marked to be ignored)
+            // - !MODULE[TexturesUnlimited] (skip TU parts)
+            // - !MODULE[SSTURecolor] (skip SSTU parts)
+            // - !MODULE[SSTURecolorGUI] (skip SSTU parts with recolor GUI)
+            // - !MODULE[ModuleB9PartSwitch]:HAS[#moduleID[SimpleRepaint]] (skip if already has SimpleRepaint B9PS)
+            var conditions = new List<string>
+            {
+                "~SR_Ignore[]",
+                "!MODULE[TexturesUnlimited]",
+                "!MODULE[SSTURecolor]",
+                "!MODULE[SSTURecolorGUI]",
+                "!MODULE[ModuleB9PartSwitch]:HAS[#moduleID[SimpleRepaint]]"
+            };
+
+            // B9PS path: no additional conditions needed
+            // B9PS with moduleID=SimpleRepaint can coexist with other B9PS modules
+            // PartVariants path: no additional conditions needed
+
+            return string.Join(",", conditions);
+        }
+
         private static void GenerateB9PSPatch(StringBuilder sb, PartAnalyzer.PartAnalysis analysis, List<ColorEntry> colors, RepaintSettings settings)
         {
-            string partName = SanitizePartName(analysis.PartName);
+            string partName = GetPartNameWithAlias(analysis.PartName);
             string materialMask = analysis.MaterialMask;
+            string hasCondition = BuildHasCondition(analysis);
 
-            sb.AppendLine($"@PART[{partName}]:FINAL");
+            sb.AppendLine($"@PART[{partName}]:HAS[{hasCondition}]:NEEDS[B9PartSwitch]:FINAL");
             sb.AppendLine("{");
             sb.AppendLine("\t%SR_RepaintType = B9PS");
             sb.AppendLine($"\t%SR_MaterialMask1 = {materialMask}");
@@ -161,9 +228,10 @@ namespace SimpleRepaintCache
 
         private static void GeneratePartVariantsPatch(StringBuilder sb, PartAnalyzer.PartAnalysis analysis, List<ColorEntry> colors, RepaintSettings settings)
         {
-            string partName = SanitizePartName(analysis.PartName);
+            string partName = GetPartNameWithAlias(analysis.PartName);
+            string hasCondition = BuildHasCondition(analysis);
 
-            sb.AppendLine($"@PART[{partName}]:FINAL");
+            sb.AppendLine($"@PART[{partName}]:HAS[{hasCondition}]:FINAL");
             sb.AppendLine("{");
             sb.AppendLine("\t%SR_RepaintType = PartVariant");
             sb.AppendLine();
