@@ -161,7 +161,6 @@ namespace SimpleRepaintCache
                 // Check for existing modules that affect repaint compatibility
                 bool hasExistingSimpleRepaintB9PS = false;
                 bool hasOtherB9PS = false;
-                bool hasPartVariantsModule = false;
                 bool hasSSTURecolor = false;
                 bool hasTexturesUnlimited = false;
                 foreach (var module in partPrefab.Modules)
@@ -186,10 +185,6 @@ namespace SimpleRepaintCache
                             hasOtherB9PS = true;
                         }
                     }
-                    if (module.moduleName == "ModulePartVariants")
-                    {
-                        hasPartVariantsModule = true;
-                    }
                     if (module.moduleName == "SSTURecolor")
                     {
                         hasSSTURecolor = true;
@@ -200,14 +195,16 @@ namespace SimpleRepaintCache
                     }
                 }
 
-                // Skip if already has SimpleRepaint module
-                if (hasExistingSimpleRepaintB9PS || hasPartVariantsModule)
+                // Skip if already has SimpleRepaint B9PS module (double injection protection)
+                // Do NOT skip parts with existing ModulePartVariants - SimpleRepaint can add
+                // a separate PartVariants module for color switching alongside the original one
+                if (hasExistingSimpleRepaintB9PS)
                 {
                     results.Add(new PartAnalysis
                     {
                         PartName = partName,
                         ShouldInject = false,
-                        Reason = "Already has SimpleRepaint module"
+                        Reason = "Already has SimpleRepaint B9PS module"
                     });
                     continue;
                 }

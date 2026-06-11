@@ -8,6 +8,7 @@ namespace SimpleRepaintCache
 {
     /// <summary>
     /// Main KSPAddon that manages the cache lifecycle.
+    /// Uses :NEEDS[!SimpleRepaintCache] on the original patch to prevent double injection.
     /// Runs after PartLoader has loaded all parts.
     /// </summary>
     [KSPAddon(KSPAddon.Startup.Instantly, true)]
@@ -38,52 +39,45 @@ namespace SimpleRepaintCache
             {
                 UnityEngine.Debug.Log("[SimpleRepaintCache] PartLoader loaded, checking cache...");
 
-                // Step 1: Crash recovery - check if original patch needs restoring
-                CacheManager.PerformCrashRecovery(_paths);
-
-                // Step 2: Check if cache is valid
+                // Step 1: Check if cache is valid
                 bool cacheValid = CacheManager.IsCacheValid(_paths, out var currentManifest);
 
                 if (cacheValid)
                 {
-                    UnityEngine.Debug.Log("[SimpleRepaintCache] Cache is valid, disabling original patch...");
-                    // Cache is good - just disable the original patch
-                    CacheManager.DisableOriginalPatch(_paths);
+                    UnityEngine.Debug.Log("[SimpleRepaintCache] Cache is valid, no action needed.");
                 }
                 else
                 {
                     UnityEngine.Debug.Log("[SimpleRepaintCache] Cache invalid or missing, regenerating...");
 
-                    // Step 3: Restore original patch first (in case it was disabled)
-                    CacheManager.RestoreOriginalPatch(_paths);
-
-                    // Step 4: Load configuration
+                    // Step 2: Load configuration
                     var colors = ColorConfigLoader.LoadColors(_paths.GameDataPath);
                     var settings = ColorConfigLoader.LoadSettings(_paths.GameDataPath);
                     var greyList = ColorConfigLoader.LoadGreyList(_paths.GameDataPath);
                     var ignoreList = ColorConfigLoader.LoadIgnoreList(_paths.GameDataPath);
                     var (whitelistMods, whitelistCategories) = ColorConfigLoader.LoadWhitelists(_paths.GameDataPath);
 
-                    // Step 5: Analyze all parts
+                    // Step 3: Analyze all parts (self-sufficient, does not depend on original patch)
                     var analyses = PartAnalyzer.AnalyzeAllParts(
                         ignoreList, greyList, settings, whitelistMods, whitelistCategories);
 
-                    // Step 6: Generate cache patch
+                    // Step 4: Generate cache patch
                     string patchContent = PatchGenerator.GeneratePatch(analyses, colors, settings);
 
                     if (!string.IsNullOrEmpty(patchContent))
                     {
-                        // Step 7: Write cache patch
+                        // Step 5: Write cache patch
                         CacheManager.WriteCachePatch(_paths, patchContent);
 
-                        // Step 8: Update manifest
+                        // Step 6: Update manifest
                         currentManifest.PartCount = analyses.Count(a => a.ShouldInject);
                         currentManifest.ColorCount = colors.Count(c => c.IsUsed);
                         currentManifest.GeneratedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                         CacheManager.SaveManifest(_paths, currentManifest);
 
-                        // Step 9: Disable original patch
-                        CacheManager.DisableOriginalPatch(_paths);
+                        // Step 7: Add :NEEDS[!SimpleRepaintCache] to original patch
+                        // This prevents MM from processing the original patch on subsequent launches
+                        CacheManager.AddNeedsCondition(_paths);
 
                         UnityEngine.Debug.Log($"[SimpleRepaintCache] Cache generated successfully! " +
                             $"{currentManifest.PartCount} parts with {currentManifest.ColorCount} colors.");
@@ -100,9 +94,6 @@ namespace SimpleRepaintCache
             {
                 UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error during cache processing: {ex.Message}");
                 UnityEngine.Debug.LogError($"[SimpleRepaintCache] Stack trace: {ex.StackTrace}");
-
-                // On error, try to restore original patch to ensure game works
-                try { CacheManager.RestoreOriginalPatch(_paths); } catch { }
             }
         }
 
@@ -112,13 +103,6 @@ namespace SimpleRepaintCache
             {
                 // Clean up event subscription
                 GameEvents.OnPartLoaderLoaded.Remove(OnPartLoaderLoaded);
-            }
-
-            // Always restore original .cfg on exit, so removing the cache mod
-            // leaves SimpleRepaint fully functional
-            if (_paths != null)
-            {
-                CacheManager.EnsureOriginalPatchOnExit(_paths);
             }
         }
     }
