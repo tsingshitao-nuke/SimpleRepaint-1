@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Text;
 
 namespace SimpleRepaintCache
@@ -154,10 +153,6 @@ namespace SimpleRepaintCache
                 "!MODULE[ModuleB9PartSwitch]:HAS[#moduleID[SimpleRepaint]]"
             };
 
-            // B9PS path: no additional conditions needed
-            // B9PS with moduleID=SimpleRepaint can coexist with other B9PS modules
-            // PartVariants path: no additional conditions needed
-
             return string.Join(",", conditions);
         }
 
@@ -184,20 +179,12 @@ namespace SimpleRepaintCache
             sb.AppendLine("\t\tuiGroupDisplayName = #LOC_SR_Repaint_UIGroup_title");
             sb.AppendLine();
 
-            // Original subtype
+            // Original subtype - no MATERIAL block, so the part keeps its original texture
             sb.AppendLine("\t\tSUBTYPE");
             sb.AppendLine("\t\t{");
             sb.AppendLine("\t\t\tname = SR_Original");
             sb.AppendLine("\t\t\ttitle = #LOC_SR_Color_Original");
             sb.AppendLine("\t\t\tprimaryColor = #C7C7C7");
-            sb.AppendLine("\t\t\tMATERIAL");
-            sb.AppendLine("\t\t\t{");
-            sb.AppendLine($"\t\t\t\tname = {materialMask}");
-            sb.AppendLine("\t\t\t\tCOLOR");
-            sb.AppendLine("\t\t\t\t{");
-            sb.AppendLine("\t\t\t\t\tcolor = #C7C7C7");
-            sb.AppendLine("\t\t\t\t}");
-            sb.AppendLine("\t\t\t}");
             sb.AppendLine("\t\t}");
 
             // Color subtypes with MATERIAL block (required for B9PS to apply colors)

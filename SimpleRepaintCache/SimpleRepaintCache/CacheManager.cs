@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -7,20 +6,12 @@ using System.Text;
 
 namespace SimpleRepaintCache
 {
-    /// <summary>
-    /// Manages cache validation, file hashing, and disabling the original patch via .bak rename.
-    /// The cache .cfg is generated at runtime after MM has finished processing, so there is
-    /// never any double injection. On subsequent launches, the original .cfg.bak is skipped by MM.
-    /// </summary>
     public static class CacheManager
     {
         private const string MANIFEST_FILENAME = "cache.manifest";
         private const string CACHE_PATCH_FILENAME = "SimpleRepaintCache.cfg";
         private const string ORIGINAL_PATCH_FILENAME = "SimpleRepaint.cfg";
 
-        /// <summary>
-        /// Manifest data stored in cache.manifest
-        /// </summary>
         public class CacheManifest
         {
             public string PartListHash { get; set; } = "";
@@ -34,9 +25,6 @@ namespace SimpleRepaintCache
             public string GeneratedAt { get; set; } = "";
         }
 
-        /// <summary>
-        /// Paths used by the cache system
-        /// </summary>
         public class CachePaths
         {
             public string GameDataPath { get; set; }
@@ -47,9 +35,6 @@ namespace SimpleRepaintCache
             public string OriginalPatchBakPath => Path.Combine(GameDataPath, "SimpleRepaint", "Patches", ORIGINAL_PATCH_FILENAME + ".bak");
         }
 
-        /// <summary>
-        /// Computes MD5 hash of a file
-        /// </summary>
         public static string ComputeFileHash(string filePath)
         {
             if (!File.Exists(filePath)) return "";
@@ -64,14 +49,11 @@ namespace SimpleRepaintCache
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error hashing file {filePath}: {ex.Message}");
+                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error hashing {filePath}: {ex.Message}");
                 return "";
             }
         }
 
-        /// <summary>
-        /// Computes a combined hash for all files in a directory matching a pattern
-        /// </summary>
         public static string ComputeDirectoryHash(string directoryPath, string pattern)
         {
             if (!Directory.Exists(directoryPath)) return "";
@@ -81,9 +63,7 @@ namespace SimpleRepaintCache
 
             var combined = new StringBuilder();
             foreach (var file in files)
-            {
                 combined.Append(ComputeFileHash(file));
-            }
 
             using (var md5 = MD5.Create())
             {
@@ -92,17 +72,15 @@ namespace SimpleRepaintCache
             }
         }
 
-        /// <summary>
-        /// Computes a hash of all part names (sorted, comma-separated)
-        /// </summary>
         public static string ComputePartListHash()
         {
-            var allParts = PartLoader.LoadedPartsList;
-            if (allParts == null || allParts.Count == 0) return "";
+            var partConfigs = GameDatabase.Instance.GetConfigs("PART");
+            if (partConfigs == null || partConfigs.Length == 0) return "";
 
-            var partNames = allParts
-                .Where(p => p != null && p.partPrefab != null)
-                .Select(p => p.name)
+            var partNames = partConfigs
+                .Where(pc => pc?.config != null)
+                .Select(pc => pc.config.GetValue("name"))
+                .Where(name => !string.IsNullOrEmpty(name))
                 .Distinct()
                 .OrderBy(n => n)
                 .ToList();
@@ -116,22 +94,14 @@ namespace SimpleRepaintCache
             }
         }
 
-        /// <summary>
-        /// Loads the cache manifest from disk
-        /// </summary>
         public static CacheManifest LoadManifest(CachePaths paths)
         {
             var manifest = new CacheManifest();
-
-            if (!File.Exists(paths.ManifestPath))
-            {
-                return manifest;
-            }
+            if (!File.Exists(paths.ManifestPath)) return manifest;
 
             try
             {
-                string[] lines = File.ReadAllLines(paths.ManifestPath);
-                foreach (string line in lines)
+                foreach (string line in File.ReadAllLines(paths.ManifestPath))
                 {
                     int idx = line.IndexOf('=');
                     if (idx < 0) continue;
@@ -161,17 +131,12 @@ namespace SimpleRepaintCache
             return manifest;
         }
 
-        /// <summary>
-        /// Saves the cache manifest to disk
-        /// </summary>
         public static void SaveManifest(CachePaths paths, CacheManifest manifest)
         {
             try
             {
                 if (!Directory.Exists(paths.CacheDir))
-                {
                     Directory.CreateDirectory(paths.CacheDir);
-                }
 
                 var sb = new StringBuilder();
                 sb.AppendLine($"PartListHash={manifest.PartListHash}");
@@ -192,14 +157,10 @@ namespace SimpleRepaintCache
             }
         }
 
-        /// <summary>
-        /// Checks if the cache is still valid by comparing hashes
-        /// </summary>
         public static bool IsCacheValid(CachePaths paths, out CacheManifest currentManifest)
         {
             currentManifest = new CacheManifest();
 
-            // Compute current hashes
             currentManifest.PartListHash = ComputePartListHash();
             currentManifest.ColorsHash = ComputeFileHash(Path.Combine(paths.GameDataPath, "SimpleRepaint", "Colors.cfg"));
             currentManifest.SettingsHash = ComputeFileHash(Path.Combine(paths.GameDataPath, "SimpleRepaint", "Settings.cfg"));
@@ -207,72 +168,38 @@ namespace SimpleRepaintCache
             currentManifest.IgnorePartsHash = ComputeDirectoryHash(Path.Combine(paths.GameDataPath, "SimpleRepaint", "IgnoreParts"), "*.cfg");
             currentManifest.WhitelistsHash = ComputeDirectoryHash(Path.Combine(paths.GameDataPath, "SimpleRepaint", "Whitelists"), "*.*");
 
-            // Load saved manifest
             var savedManifest = LoadManifest(paths);
 
-            // Check if cache patch file exists
             if (!File.Exists(paths.CachePatchPath))
             {
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Cache patch file not found, needs regeneration");
+                UnityEngine.Debug.Log("[SimpleRepaintCache] Cache patch file not found");
                 return false;
             }
 
-            // Compare hashes
-            bool valid = true;
+            bool valid = currentManifest.PartListHash == savedManifest.PartListHash
+                      && currentManifest.ColorsHash == savedManifest.ColorsHash
+                      && currentManifest.SettingsHash == savedManifest.SettingsHash
+                      && currentManifest.GreyListHash == savedManifest.GreyListHash
+                      && currentManifest.IgnorePartsHash == savedManifest.IgnorePartsHash
+                      && currentManifest.WhitelistsHash == savedManifest.WhitelistsHash;
 
-            if (currentManifest.PartListHash != savedManifest.PartListHash)
-            {
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Part list changed, cache invalid");
-                valid = false;
-            }
-            if (currentManifest.ColorsHash != savedManifest.ColorsHash)
-            {
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Colors.cfg changed, cache invalid");
-                valid = false;
-            }
-            if (currentManifest.SettingsHash != savedManifest.SettingsHash)
-            {
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Settings.cfg changed, cache invalid");
-                valid = false;
-            }
-            if (currentManifest.GreyListHash != savedManifest.GreyListHash)
-            {
-                UnityEngine.Debug.Log("[SimpleRepaintCache] GreyList.cfg changed, cache invalid");
-                valid = false;
-            }
-            if (currentManifest.IgnorePartsHash != savedManifest.IgnorePartsHash)
-            {
-                UnityEngine.Debug.Log("[SimpleRepaintCache] IgnoreParts changed, cache invalid");
-                valid = false;
-            }
-            if (currentManifest.WhitelistsHash != savedManifest.WhitelistsHash)
-            {
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Whitelists changed, cache invalid");
-                valid = false;
-            }
-
-            if (valid)
-            {
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Cache is valid!");
-            }
+            if (!valid)
+                UnityEngine.Debug.Log("[SimpleRepaintCache] Cache invalid (config or parts changed)");
+            else
+                UnityEngine.Debug.Log("[SimpleRepaintCache] Cache is valid");
 
             return valid;
         }
 
-        /// <summary>
-        /// Writes the cache patch file to disk
-        /// </summary>
         public static bool WriteCachePatch(CachePaths paths, string content)
         {
             try
             {
                 if (!Directory.Exists(paths.CacheDir))
-                {
                     Directory.CreateDirectory(paths.CacheDir);
-                }
 
                 File.WriteAllText(paths.CachePatchPath, content);
-                UnityEngine.Debug.Log($"[SimpleRepaintCache] Cache patch written to: {paths.CachePatchPath}");
+                UnityEngine.Debug.Log($"[SimpleRepaintCache] Cache patch written: {paths.CachePatchPath}");
                 return true;
             }
             catch (Exception ex)
@@ -282,109 +209,36 @@ namespace SimpleRepaintCache
             }
         }
 
-        /// <summary>
-        /// Renames the original SimpleRepaint.cfg to .bak so MM skips it on subsequent launches.
-        /// The cache .cfg is generated at runtime after MM has finished, so there is no double injection.
-        /// </summary>
-        public static bool DisableOriginalPatch(CachePaths paths)
+        public static string ComputeStubContent()
         {
-            try
-            {
-                if (File.Exists(paths.OriginalPatchBakPath))
-                {
-                    // Already disabled
-                    return true;
-                }
-
-                if (!File.Exists(paths.OriginalPatchPath))
-                {
-                    UnityEngine.Debug.LogWarning("[SimpleRepaintCache] Original patch not found, cannot disable");
-                    return false;
-                }
-
-                File.Move(paths.OriginalPatchPath, paths.OriginalPatchBakPath);
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Disabled original patch: .cfg → .bak");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error disabling original patch: {ex.Message}");
-                return false;
-            }
+            return "// SimpleRepaint is disabled by SimpleRepaintCache." + Environment.NewLine +
+                   "// To restore the original patch, remove SimpleRepaintCache and" + Environment.NewLine +
+                   "// rename SimpleRepaint/Patches/SimpleRepaint.cfg.bak to SimpleRepaint.cfg" + Environment.NewLine;
         }
 
-        /// <summary>
-        /// Restores the original patch from .bak to .cfg.
-        /// Used when the cache mod is removed - player manually renames .bak back to .cfg.
-        /// </summary>
-        public static bool RestoreOriginalPatch(CachePaths paths)
+        public static bool SwitchToCacheMode(CachePaths paths)
         {
             try
             {
                 if (!File.Exists(paths.OriginalPatchBakPath))
                 {
-                    // Already restored or never disabled
-                    return true;
+                    if (!File.Exists(paths.OriginalPatchPath))
+                    {
+                        UnityEngine.Debug.LogWarning("[SimpleRepaintCache] Original patch not found");
+                        return false;
+                    }
+
+                    File.Move(paths.OriginalPatchPath, paths.OriginalPatchBakPath);
+                    UnityEngine.Debug.Log("[SimpleRepaintCache] Original patch renamed to .bak");
                 }
 
-                if (File.Exists(paths.OriginalPatchPath))
-                {
-                    // Both exist, remove the .cfg (it's the cache-generated one)
-                    File.Delete(paths.OriginalPatchPath);
-                }
-
-                File.Move(paths.OriginalPatchBakPath, paths.OriginalPatchPath);
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Restored original patch: .bak → .cfg");
+                File.WriteAllText(paths.OriginalPatchPath, ComputeStubContent());
+                UnityEngine.Debug.Log("[SimpleRepaintCache] Stub patch created");
                 return true;
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error restoring original patch: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Checks if the cache directory exists. If not (e.g. user deleted cache to reinstall),
-        /// restores the original .cfg from .bak so this launch works with the original patch.
-        /// Returns true if restoration was performed.
-        /// </summary>
-        public static bool RestoreOriginalPatchIfCacheMissing(CachePaths paths)
-        {
-            try
-            {
-                // Check if cache directory or manifest is missing
-                bool cacheMissing = !Directory.Exists(paths.CacheDir) || !File.Exists(paths.ManifestPath);
-
-                if (!cacheMissing)
-                {
-                    return false;
-                }
-
-                // Cache is missing, check if we have a .bak to restore
-                if (!File.Exists(paths.OriginalPatchBakPath))
-                {
-                    // No .bak, nothing to restore
-                    return false;
-                }
-
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Cache directory missing, restoring original patch for this launch...");
-
-                // Remove any existing .cfg (might be stale cache)
-                if (File.Exists(paths.OriginalPatchPath))
-                {
-                    File.Delete(paths.OriginalPatchPath);
-                }
-
-                // Restore .bak → .cfg
-                File.Move(paths.OriginalPatchBakPath, paths.OriginalPatchPath);
-                UnityEngine.Debug.Log("[SimpleRepaintCache] Original patch restored: .bak → .cfg");
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error restoring original patch: {ex.Message}");
+                UnityEngine.Debug.LogError($"[SimpleRepaintCache] Error switching to cache mode: {ex.Message}");
                 return false;
             }
         }

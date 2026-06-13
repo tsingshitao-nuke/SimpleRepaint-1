@@ -4,15 +4,8 @@ using System.Linq;
 
 namespace SimpleRepaintCache
 {
-    /// <summary>
-    /// Analyzes parts and determines whether they should receive repaint modules.
-    /// Replicates the filtering logic from SimpleRepaint.cfg
-    /// </summary>
     public static class PartAnalyzer
     {
-        /// <summary>
-        /// Result of analyzing a part
-        /// </summary>
         public class PartAnalysis
         {
             public string PartName { get; set; }
@@ -22,10 +15,7 @@ namespace SimpleRepaintCache
             public string Reason { get; set; }
         }
 
-        /// <summary>
-        /// Analyzes all loaded parts and determines which should get repaint modules
-        /// </summary>
-        public static List<PartAnalysis> AnalyzeAllParts(
+        public static List<PartAnalysis> AnalyzeAllPartsFromDatabase(
             HashSet<string> ignoreList,
             HashSet<string> greyList,
             RepaintSettings settings,
@@ -34,236 +24,124 @@ namespace SimpleRepaintCache
         {
             var results = new List<PartAnalysis>();
 
-            var allParts = PartLoader.LoadedPartsList;
-            if (allParts == null || allParts.Count == 0)
+            var partConfigs = GameDatabase.Instance.GetConfigs("PART");
+            if (partConfigs == null || partConfigs.Length == 0)
             {
-                UnityEngine.Debug.LogWarning("[SimpleRepaintCache] PartLoader.LoadedPartsList is empty!");
+                UnityEngine.Debug.LogWarning("[SimpleRepaintCache] No PART configs found in GameDatabase!");
                 return results;
             }
 
-            // Deduplicate by part name to prevent double injection
             var seenPartNames = new HashSet<string>();
-            var distinctParts = new List<AvailablePart>();
-            foreach (var p in allParts)
+            var distinctPartConfigs = new List<ConfigNode>();
+            foreach (var pc in partConfigs)
             {
-                if (p == null || p.partPrefab == null) continue;
-                if (seenPartNames.Add(p.name))
-                {
-                    distinctParts.Add(p);
-                }
+                if (pc?.config == null) continue;
+                string name = pc.config.GetValue("name");
+                if (!string.IsNullOrEmpty(name) && seenPartNames.Add(name))
+                    distinctPartConfigs.Add(pc.config);
             }
 
-            UnityEngine.Debug.Log($"[SimpleRepaintCache] Analyzing {distinctParts.Count} distinct parts (from {allParts.Count} total entries)...");
+            UnityEngine.Debug.Log($"[SimpleRepaintCache] Analyzing {distinctPartConfigs.Count} distinct parts...");
 
-            foreach (var availPart in distinctParts)
+            foreach (var partConfig in distinctPartConfigs)
             {
-                string partName = availPart.name;
-                var partPrefab = availPart.partPrefab;
+                string partName = partConfig.GetValue("name");
+                if (string.IsNullOrEmpty(partName)) continue;
 
-                // Skip kerbalEVA parts
+                // Skip kerbalEVA
                 if (partName.StartsWith("kerbalEVA", StringComparison.OrdinalIgnoreCase))
                 {
-                    results.Add(new PartAnalysis
-                    {
-                        PartName = partName,
-                        ShouldInject = false,
-                        Reason = "KerbalEVA part"
-                    });
+                    results.Add(new PartAnalysis { PartName = partName, ShouldInject = false, Reason = "KerbalEVA" });
                     continue;
                 }
 
-                // Check ignore list
+                // Ignore list
                 if (ignoreList.Contains(partName))
                 {
-                    results.Add(new PartAnalysis
-                    {
-                        PartName = partName,
-                        ShouldInject = false,
-                        Reason = "In ignore list"
-                    });
+                    results.Add(new PartAnalysis { PartName = partName, ShouldInject = false, Reason = "Ignored" });
                     continue;
                 }
 
-                // Check if part already has SR_Ignore field set by other patches
-                // SR_Ignore is set via MM patches as a Part field, check partPrefab's module fields
-                bool hasSRIgnore = false;
-                try
+                // SR_Ignore
+                string srIgnore = partConfig.GetValue("SR_Ignore");
+                if (srIgnore != null && (srIgnore == "true" || srIgnore == "True"))
                 {
-                    // Check all modules for SR_Ignore field
-                    foreach (var module in partPrefab.Modules)
-                    {
-                        var ignoreField = module.Fields["SR_Ignore"];
-                        if (ignoreField != null)
-                        {
-                            string val = ignoreField.GetValue<string>(module);
-                            if (val == "true" || val == "True")
-                            {
-                                hasSRIgnore = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                catch { }
-
-                if (hasSRIgnore)
-                {
-                    results.Add(new PartAnalysis
-                    {
-                        PartName = partName,
-                        ShouldInject = false,
-                        Reason = "SR_Ignore = true"
-                    });
+                    results.Add(new PartAnalysis { PartName = partName, ShouldInject = false, Reason = "SR_Ignore" });
                     continue;
                 }
 
-                // Check whitelist if enabled
+                // Whitelist
                 if (settings.RepaintWhitelistedPartsOnly)
                 {
                     bool isWhitelisted = false;
-
-                    // Check by mod (manufacturer) - use AvailablePart info
-                    string manufacturer = availPart.manufacturer ?? "";
-                    if (whitelistMods.Count > 0)
+                    string manufacturer = partConfig.GetValue("manufacturer") ?? "";
+                    foreach (var mod in whitelistMods)
                     {
-                        foreach (var mod in whitelistMods)
-                        {
-                            if (manufacturer.IndexOf(mod, StringComparison.OrdinalIgnoreCase) >= 0)
-                            {
-                                isWhitelisted = true;
-                                break;
-                            }
-                        }
+                        if (manufacturer.IndexOf(mod, StringComparison.OrdinalIgnoreCase) >= 0)
+                        { isWhitelisted = true; break; }
                     }
-
-                    // Check by category
-                    if (!isWhitelisted && whitelistCategories.Count > 0)
-                    {
-                        string category = availPart.category.ToString();
-                        if (whitelistCategories.Contains(category))
-                        {
-                            isWhitelisted = true;
-                        }
-                    }
-
                     if (!isWhitelisted)
                     {
-                        results.Add(new PartAnalysis
-                        {
-                            PartName = partName,
-                            ShouldInject = false,
-                            Reason = "Not whitelisted"
-                        });
+                        string category = partConfig.GetValue("category") ?? "";
+                        if (whitelistCategories.Contains(category)) isWhitelisted = true;
+                    }
+                    if (!isWhitelisted)
+                    {
+                        results.Add(new PartAnalysis { PartName = partName, ShouldInject = false, Reason = "Not whitelisted" });
                         continue;
                     }
                 }
 
-                // Check for existing modules that affect repaint compatibility
+                // Module detection
                 bool hasExistingSimpleRepaintB9PS = false;
                 bool hasPartVariants = false;
                 bool hasSSTURecolor = false;
                 bool hasTexturesUnlimited = false;
                 bool hasSSTURecolorGUI = false;
-                foreach (var module in partPrefab.Modules)
+                bool hasModuleWeaponBallistic = false;
+
+                foreach (var moduleNode in partConfig.GetNodes("MODULE"))
                 {
-                    if (module.moduleName == "ModuleB9PartSwitch")
+                    string moduleName = moduleNode.GetValue("name");
+                    if (string.IsNullOrEmpty(moduleName)) continue;
+
+                    switch (moduleName)
                     {
-                        var moduleIDField = module.Fields["moduleID"];
-                        if (moduleIDField != null)
-                        {
-                            string mid = moduleIDField.GetValue<string>(module);
-                            if (mid == "SimpleRepaint")
-                            {
+                        case "ModuleB9PartSwitch":
+                            if (moduleNode.GetValue("moduleID") == "SimpleRepaint")
                                 hasExistingSimpleRepaintB9PS = true;
-                            }
-                        }
-                    }
-                    if (module.moduleName == "ModulePartVariants")
-                    {
-                        hasPartVariants = true;
-                    }
-                    if (module.moduleName == "SSTURecolor")
-                    {
-                        hasSSTURecolor = true;
-                    }
-                    if (module.moduleName == "TexturesUnlimited")
-                    {
-                        hasTexturesUnlimited = true;
-                    }
-                    if (module.moduleName == "SSTURecolorGUI")
-                    {
-                        hasSSTURecolorGUI = true;
+                            break;
+                        case "ModulePartVariants": hasPartVariants = true; break;
+                        case "SSTURecolor": hasSSTURecolor = true; break;
+                        case "TexturesUnlimited": hasTexturesUnlimited = true; break;
+                        case "SSTURecolorGUI": hasSSTURecolorGUI = true; break;
+                        case "ModuleWeapon":
+                            if (moduleNode.GetValue("weaponType") == "ballistic")
+                                hasModuleWeaponBallistic = true;
+                            break;
                     }
                 }
 
-                // Skip if already has SimpleRepaint B9PS module (double injection protection)
-                // Do NOT skip parts with existing ModulePartVariants - SimpleRepaint can add
-                // a separate PartVariants module for color switching alongside the original one
                 if (hasExistingSimpleRepaintB9PS)
                 {
-                    results.Add(new PartAnalysis
-                    {
-                        PartName = partName,
-                        ShouldInject = false,
-                        Reason = "Already has SimpleRepaint B9PS module"
-                    });
+                    results.Add(new PartAnalysis { PartName = partName, ShouldInject = false, Reason = "Already has SR B9PS" });
                     continue;
                 }
 
-                // Skip parts with SSTURecolor, SSTURecolorGUI, or TexturesUnlimited (they have better repaint support)
                 if (hasSSTURecolor || hasTexturesUnlimited || hasSSTURecolorGUI)
                 {
-                    string reason;
-                    if (hasSSTURecolor) reason = "Has SSTURecolor module";
-                    else if (hasSSTURecolorGUI) reason = "Has SSTURecolorGUI module";
-                    else reason = "Has TexturesUnlimited module";
-                    results.Add(new PartAnalysis
-                    {
-                        PartName = partName,
-                        ShouldInject = false,
-                        Reason = reason
-                    });
+                    results.Add(new PartAnalysis { PartName = partName, ShouldInject = false, Reason = "Has TU/SSTU" });
                     continue;
                 }
 
-                // Check if part is in grey list (B9PS incompatible)
-                bool isGreyListed = greyList.Contains(partName);
+                bool isGreyListed = greyList.Contains(partName) || hasModuleWeaponBallistic;
 
-                // Check for ModuleWeapon (dynamic grey list from GreyList.cfg)
-                if (!isGreyListed)
-                {
-                    foreach (var module in partPrefab.Modules)
-                    {
-                        if (module.moduleName == "ModuleWeapon")
-                        {
-                            var weaponTypeField = module.Fields["weaponType"];
-                            if (weaponTypeField != null)
-                            {
-                                string wt = weaponTypeField.GetValue<string>(module);
-                                if (wt == "ballistic")
-                                {
-                                    isGreyListed = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // If part already has ModulePartVariants AND is grey-listed, skip it
-                // (grey-listed parts can't use B9PS, and we don't want to add a second PartVariants module)
                 if (hasPartVariants && isGreyListed)
                 {
-                    results.Add(new PartAnalysis
-                    {
-                        PartName = partName,
-                        ShouldInject = false,
-                        Reason = "Has PartVariants and is grey-listed"
-                    });
+                    results.Add(new PartAnalysis { PartName = partName, ShouldInject = false, Reason = "Has PartVariants + grey-listed" });
                     continue;
                 }
 
-                // Only grey-listed parts use PartVariants; everything else uses B9PS
                 bool useB9PS = !isGreyListed;
 
                 results.Add(new PartAnalysis
@@ -272,12 +150,12 @@ namespace SimpleRepaintCache
                     ShouldInject = true,
                     UseB9PS = useB9PS,
                     MaterialMask = "*",
-                    Reason = useB9PS ? "B9PS" : "PartVariants (grey-listed)"
+                    Reason = useB9PS ? "B9PS" : "PartVariants"
                 });
             }
 
             int injectCount = results.Count(r => r.ShouldInject);
-            UnityEngine.Debug.Log($"[SimpleRepaintCache] Analysis complete: {injectCount}/{results.Count} parts will get repaint modules");
+            UnityEngine.Debug.Log($"[SimpleRepaintCache] Analysis done: {injectCount}/{results.Count} parts will get repaint");
             return results;
         }
     }

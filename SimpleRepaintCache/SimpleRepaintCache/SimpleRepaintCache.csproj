@@ -64,7 +64,6 @@
     <Compile Include="PatchGenerator.cs" />
     <Compile Include="CacheManager.cs" />
     <Compile Include="SimpleRepaintCache.cs" />
-    <Compile Include="RuntimeInjector.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>
